@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>轨道车 · 路程采样与前方观察点 · 预览</title>
+<style>
+    body { margin: 24px; background: #1d2027; color: #dfe3ea; font-family: sans-serif; }
+    h1 { font-size: 18px; font-weight: normal; }
+    h2 { font-size: 14px; font-weight: normal; color: #aab3c2; margin-top: 28px; }
+    p.legend { font-size: 13px; color: #9aa3b2; line-height: 1.7; }
+    canvas { background: #262a33; border-radius: 8px; display: block; }
+    .row { margin-top: 14px; font-size: 13px; }
+    .row label { display: inline-block; width: 110px; color: #9aa3b2; }
+    .row input { width: 320px; vertical-align: middle; }
+    .row output { margin-left: 10px; color: #ffd479; font-variant-numeric: tabular-nums; }
+    .readout { font-family: monospace; font-size: 13px; color: #b8e0a8; }
+    .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+</style>
+</head>
+<body>
+<h1>轨道车 —— 按路程走，收口轨道越过终点回到入口</h1>
+<p class="legend">
+    这条预览直接加载 <code>src/curves/RailTrack.js</code> 的源码，和测试跑的是同一份实现。
+</p>
+<p class="legend">
+    <span class="swatch" style="background:#5aa9ff"></span>收口轨道（蓝，长 134.439658） ·
+    <span class="swatch" style="background:#7bd88f"></span>不收口短轨（绿，长 30）<br>
+    <span class="swatch" style="background:#ffffff"></span>车 · <span class="swatch" style="background:#ffd479"></span>车头前方 15 的观察点<br>
+    两条轨在 0,0 → 30,0 这段是重合的，为了让两条轨都看得见，短轨在画面上向下错开了 8 像素；
+    所有读数仍用真实坐标，没有加这个偏移。
+</p>
+
+<canvas id="view" width="900" height="620"></canvas>
+
+<div class="row">
+    <label for="loopDistance">收口轨道路程</label>
+    <input id="loopDistance" type="range" min="0" max="164.439658" step="0.5" value="125">
+    <output id="loopOut"></output>
+</div>
+<div class="row readout" id="loopReadout"></div>
+
+<div class="row">
+    <label for="openDistance">短轨路程</label>
+    <input id="openDistance" type="range" min="0" max="60" step="0.5" value="40">
+    <output id="openOut"></output>
+</div>
+<div class="row readout" id="openReadout"></div>
+
+<script>
+//  极简 CommonJS 垫片：按模块路径后缀加载 src/ 下的真实源码，
+//  让浏览器预览与单元测试使用同一份实现。
+(function ()
+{
+    var registry = {};
+
+    window.require = function (path)
+    {
+        //  Phaser's sources use paths relative to their own file, e.g.
+        //  '../utils/Class' or '../math/Vector2'. Match them against the
+        //  registry key that the path ends with.
+        var key = path.replace(/(\.\.\/)+/g, '').replace(/^\.\//, '');
+        var found = Object.keys(registry).filter(function (name)
+        {
+            return name === key || name.slice(-key.length - 1) === '/' + key;
+        });
+
+        if (!found.length)
+        {
+            throw new Error('未知模块: ' + path);
+        }
+
+        return registry[found[0]];
+    };
+
+    window.module = { exports: {} };
+
+    window.registerModule = function (key)
+    {
+        registry[key] = window.module.exports;
+        window.module = { exports: {} };
+    };
+}());
+</script>
+
+<script src="../src/utils/Class.js"></script>
+<script>window.registerModule('utils/Class');</script>
+
+<script src="../src/math/fuzzy/Equal.js"></script>
+<script>window.registerModule('math/fuzzy/Equal');</script>
+
+<script src="../src/math/Vector2.js"></script>
+<script>window.registerModule('math/Vector2');</script>
+
+<script src="../src/math/interpolation/QuadraticBezierInterpolation.js"></script>
+<script>window.registerModule('math/interpolation/QuadraticBezierInterpolation');</script>
+
+<script src="../src/curves/RailTrack.js"></script>
+<script>window.registerModule('curves/RailTrack'); window.RailTrack = window.require('curves/RailTrack');</script>
+
+<script>
+(function ()
+{
+    var RailTrack = window.RailTrack;
+
+    //  题目里的两条轨
+    var loop = new RailTrack({ closed: true, lookAhead: 15 });
+
+    loop.lineTo(30, 0);
+    loop.quadraticBezierTo(30, 40, 0, 40);
+    loop.lineTo(0, 0);
+
+    var open = new RailTrack({ closed: false, lookAhead: 15 });
+
+    open.lineTo(30, 0);
+
+    var canvas = document.getElementById('view');
+    var ctx = canvas.getContext('2d');
+
+    var SCALE = 11;
+    var ORIGIN_X = 90;
+    var ORIGIN_Y = 470;
+    var OPEN_SHIFT_Y = 8;
+
+    function toScreenX (x)
+    {
+        return ORIGIN_X + x * SCALE;
+    }
+
+    function toScreenY (y, shifted)
+    {
+        return ORIGIN_Y - y * SCALE + (shifted ? OPEN_SHIFT_Y : 0);
+    }
+
+    function traceTrack (track, shifted)
+    {
+        var points = track.getPoints(240);
+
+        ctx.beginPath();
+
+        points.forEach(function (p, i)
+        {
+            var sx = toScreenX(p.x);
+            var sy = toScreenY(p.y, shifted);
+
+            if (i === 0)
+            {
+                ctx.moveTo(sx, sy);
+            }
+            else
+            {
+                ctx.lineTo(sx, sy);
+            }
+        });
+
+        ctx.stroke();
+    }
+
+    function drawArrow (x, y, tangent, color, shifted)
+    {
+        var sx = toScreenX(x);
+        var sy = toScreenY(y, shifted);
+        var len = 26;
+
+        //  屏幕 y 轴向下，所以方向向量的 y 取反
+        var dx = tangent.x;
+        var dy = -tangent.y;
+
+        ctx.strokeStyle = color;
+        ctx.fillStyle = color;
+        ctx.lineWidth = 2;
+
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+        ctx.lineTo(sx + dx * len, sy + dy * len);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(sx + dx * len, sy + dy * len);
+        ctx.lineTo(sx + dx * len - dy * 6 - dx * 8, sy + dy * len + dx * 6 - dy * 8);
+        ctx.lineTo(sx + dx * len + dy * 6 - dx * 8, sy + dy * len - dx * 6 - dy * 8);
+        ctx.closePath();
+        ctx.fill();
+    }
+
+    function drawCar (x, y, tangent, shifted)
+    {
+        var sx = toScreenX(x);
+        var sy = toScreenY(y, shifted);
+
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.rotate(Math.atan2(tangent.y, tangent.x));
+
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.moveTo(12, 0);
+        ctx.lineTo(-9, 7);
+        ctx.lineTo(-9, -7);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+    }
+
+    function drawObservation (x, y, color, shifted)
+    {
+        var sx = toScreenX(x);
+        var sy = toScreenY(y, shifted);
+
+        ctx.beginPath();
+        ctx.arc(sx, sy, 7, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.strokeStyle = '#1d2027';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+    }
+
+    function drawAxes ()
+    {
+        ctx.strokeStyle = '#333a46';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(ORIGIN_X - 30, ORIGIN_Y);
+        ctx.lineTo(ORIGIN_X + 30 * SCALE + 60, ORIGIN_Y);
+        ctx.stroke();
+
+        ctx.fillStyle = '#66707f';
+        ctx.font = '11px monospace';
+        ctx.fillText('0,0', ORIGIN_X - 8, ORIGIN_Y + 18);
+        ctx.fillText('30,0', toScreenX(30) - 14, ORIGIN_Y + 18);
+        ctx.fillText('0,40', ORIGIN_X - 34, toScreenY(40) + 4);
+        ctx.fillText('30,40', toScreenX(30) - 14, toScreenY(40) - 10);
+    }
+
+    function fixed (n)
+    {
+        return (Math.round(n * 1000) / 1000).toFixed(3);
+    }
+
+    function render ()
+    {
+        var loopDistance = parseFloat(document.getElementById('loopDistance').value);
+        var openDistance = parseFloat(document.getElementById('openDistance').value);
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        drawAxes();
+
+        //  收口轨道
+        ctx.strokeStyle = '#5aa9ff';
+        ctx.lineWidth = 3;
+        traceTrack(loop, false);
+        ctx.fillStyle = '#5aa9ff';
+        ctx.font = '12px sans-serif';
+        ctx.fillText('收口轨道 134.439658', toScreenX(0) + 4, toScreenY(40) - 24);
+
+        //  短轨（画面上向下错开一点，避免和收口轨道的第一段完全重合）
+        ctx.strokeStyle = '#7bd88f';
+        ctx.lineWidth = 3;
+        traceTrack(open, true);
+        ctx.fillStyle = '#7bd88f';
+        ctx.fillText('短轨 30（画面下移 8px）', toScreenX(0) + 4, toScreenY(0, true) + 26);
+
+        var loopCar = loop.getCarState(loopDistance);
+        var loopObs = loop.getObservation(loopDistance);
+
+        drawArrow(loopCar.point.x, loopCar.point.y, loopCar.tangent, '#5aa9ff', false);
+        drawObservation(loopObs.point.x, loopObs.point.y, '#ffd479', false);
+        drawCar(loopCar.point.x, loopCar.point.y, loopCar.tangent, false);
+
+        var openCar = open.getCarState(openDistance);
+        var openObs = open.getObservation(openDistance);
+
+        drawArrow(openCar.point.x, openCar.point.y, openCar.tangent, '#7bd88f', true);
+        drawObservation(openObs.point.x, openObs.point.y, '#ffd479', true);
+        drawCar(openCar.point.x, openCar.point.y, openCar.tangent, true);
+
+        document.getElementById('loopOut').textContent = loopDistance.toFixed(1);
+        document.getElementById('openOut').textContent = openDistance.toFixed(1);
+
+        document.getElementById('loopReadout').textContent =
+            '车 ' + fixed(loopCar.point.x) + ', ' + fixed(loopCar.point.y) +
+            '   车头 ' + fixed(loopCar.tangent.x) + ', ' + fixed(loopCar.tangent.y) +
+            '   观察点 ' + fixed(loopObs.point.x) + ', ' + fixed(loopObs.point.y);
+
+        document.getElementById('openReadout').textContent =
+            '车 ' + fixed(openCar.point.x) + ', ' + fixed(openCar.point.y) +
+            '   车头 ' + fixed(openCar.tangent.x) + ', ' + fixed(openCar.tangent.y) +
+            '   观察点 ' + fixed(openObs.point.x) + ', ' + fixed(openObs.point.y);
+    }
+
+    document.getElementById('loopDistance').addEventListener('input', render);
+    document.getElementById('openDistance').addEventListener('input', render);
+
+    render();
+}());
+</script>
+</body>
+</html>

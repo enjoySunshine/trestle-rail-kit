@@ -7883,6 +7883,98 @@ declare namespace Phaser {
             getTangent<O extends Phaser.Math.Vector2>(t: number, out?: O): O;
 
             /**
+             * Is this Path a closed loop?
+             *
+             * A Path is considered closed if its `autoClose` flag is set, or if the start point of
+             * its first Curve is exactly the same as the end point of its last Curve.
+             * @returns `true` if this Path forms a closed loop, otherwise `false`.
+             */
+            isClosed(): boolean;
+
+            /**
+             * Maps a traveled distance onto this Path.
+             *
+             * If `wrap` is `true`, a closed loop wraps the distance around, so a distance of exactly
+             * one full Path length resolves to 0. If `wrap` is `false`, the distance is clamped to the
+             * start and end of the Path. If `wrap` is omitted, the Path's closed state is used,
+             * as reported by {@link #isClosed}.
+             * @param distance The raw traveled distance, in pixels.
+             * @param wrap Force wrapping on (`true`) or off (`false`). Defaults to the Path's closed state.
+             * @returns The resolved distance, between 0 and the total Path length.
+             */
+            resolveDistance(distance: number, wrap?: boolean): number;
+
+            /**
+             * Returns the point at a traveled distance along the Path.
+             *
+             * Unlike {@link #getPoint}, which samples by normalized position, this method samples by
+             * arc length. On a closed Path, distances beyond the total length wrap back to the start;
+             * on an open Path they clamp to the end point.
+             * @param distance The distance traveled from the start of the Path, in pixels.
+             * @param wrap Force wrapping on (`true`) or off (`false`). Defaults to the Path's closed state.
+             * @param out An object in which to store the calculated point.
+             * @returns The point at the resolved distance.
+             */
+            getPointAtDistance<O extends Phaser.Math.Vector2>(distance: number, wrap?: boolean, out?: O): O;
+
+            /**
+             * Returns the unit tangent (heading) at a traveled distance along the Path.
+             *
+             * Unlike {@link #getTangent}, which samples by normalized position, this method samples by
+             * arc length. On a closed Path, distances beyond the total length wrap back to the start;
+             * on an open Path they clamp to the end point.
+             * @param distance The distance traveled from the start of the Path, in pixels.
+             * @param wrap Force wrapping on (`true`) or off (`false`). Defaults to the Path's closed state.
+             * @param out A vector to store the result in.
+             * @returns The unit tangent at the resolved distance.
+             */
+            getTangentAtDistance<O extends Phaser.Math.Vector2>(distance: number, wrap?: boolean, out?: O): O;
+
+            /**
+             * Returns the state of a vehicle at a traveled distance along the Path.
+             *
+             * The returned object contains the resolved distance, the point and the heading (unit
+             * tangent) at that point.
+             * @param distance The distance traveled from the start of the Path, in pixels.
+             * @param wrap Force wrapping on (`true`) or off (`false`). Defaults to the Path's closed state.
+             * @returns An object with `distance`, `point` and `tangent` properties.
+             */
+            getCarState(distance: number, wrap?: boolean): { distance: number, point: Phaser.Math.Vector2, tangent: Phaser.Math.Vector2 };
+
+            /**
+             * Returns the observation state at a fixed distance ahead of a vehicle.
+             *
+             * The observation distance is resolved with the same rules as the vehicle: on a closed
+             * Path it wraps past the end and back onto the first Curve, while on an open Path it
+             * stops at the final point.
+             * @param distance The vehicle's traveled distance, in pixels.
+             * @param lead The distance ahead of the vehicle, in pixels.
+             * @param wrap Force wrapping on (`true`) or off (`false`). Defaults to the Path's closed state.
+             * @returns An object with `distance`, `point` and `tangent` properties.
+             */
+            getObservation(distance: number, lead: number, wrap?: boolean): { distance: number, point: Phaser.Math.Vector2, tangent: Phaser.Math.Vector2 };
+
+            /**
+             * Returns only the observation point at a fixed distance ahead of a vehicle.
+             * @param distance The vehicle's traveled distance, in pixels.
+             * @param lead The distance ahead of the vehicle, in pixels.
+             * @param wrap Force wrapping on (`true`) or off (`false`). Defaults to the Path's closed state.
+             * @param out An object in which to store the calculated point.
+             * @returns The observation point.
+             */
+            getObservationPoint<O extends Phaser.Math.Vector2>(distance: number, lead: number, wrap?: boolean, out?: O): O;
+
+            /**
+             * Returns only the observation heading at a fixed distance ahead of a vehicle.
+             * @param distance The vehicle's traveled distance, in pixels.
+             * @param lead The distance ahead of the vehicle, in pixels.
+             * @param wrap Force wrapping on (`true`) or off (`false`). Defaults to the Path's closed state.
+             * @param out A vector to store the result in.
+             * @returns The observation tangent.
+             */
+            getObservationTangent<O extends Phaser.Math.Vector2>(distance: number, lead: number, wrap?: boolean, out?: O): O;
+
+            /**
              * Creates a line curve from the previous end point to x/y.
              * @param x The X coordinate of the line's end point, or a `Vector2` / `Vector2Like` containing the entire end point.
              * @param y The Y coordinate of the line's end point, if a number was passed as the X parameter.
@@ -7929,13 +8021,219 @@ declare namespace Phaser {
         }
 
         /**
+         * A RailTrack is a Path-like curve that is sampled by traveled distance instead of by
+         * normalized position. It is intended for rail vehicles, camera rails and any other
+         * object that moves "distance per frame" rather than "fraction per tween".
+         *
+         * An open track stops at its final point. A closed track wraps, so a distance of exactly
+         * one full length resolves to the start point.
+         */
+        class RailTrack {
+            /**
+             *
+             * @param config Configuration options for the track.
+             */
+            constructor(config?: Phaser.Types.Curves.RailTrackConfig);
+
+            /**
+             * Is this track closed? A closed track wraps distances; an open track clamps them.
+             */
+            closed: boolean;
+
+            /**
+             * The number of arc-length subdivisions used for each curved segment.
+             */
+            arcLengthDivisions: number;
+
+            /**
+             * The default distance ahead of the vehicle at which the observation point is placed.
+             */
+            lookAhead: number;
+
+            /**
+             * The starting point of the track.
+             */
+            startPoint: Phaser.Math.Vector2;
+
+            /**
+             * The segments that make up this track.
+             */
+            segments: object[];
+
+            /**
+             * Appends a straight line segment from the current end of the track to the given point.
+             * @param x The X coordinate of the line's end point.
+             * @param y The Y coordinate of the line's end point.
+             * @returns This RailTrack object.
+             */
+            lineTo(x: number, y: number): this;
+
+            /**
+             * Appends a quadratic Bézier segment from the current end of the track, using the given
+             * control point and end point.
+             * @param x The X coordinate of the end point.
+             * @param y The Y coordinate of the end point.
+             * @param controlX The X coordinate of the control point.
+             * @param controlY The Y coordinate of the control point.
+             * @returns This RailTrack object.
+             */
+            quadraticBezierTo(x: number, y: number, controlX: number, controlY: number): this;
+
+            /**
+             * Returns the ending point of the track.
+             * @param out An optional Vector2 to store the result in.
+             * @returns The ending point.
+             */
+            getEndPoint<O extends Phaser.Math.Vector2>(out?: O): O;
+
+            /**
+             * Returns the starting point of the track.
+             * @param out An optional Vector2 to store the result in.
+             * @returns The starting point.
+             */
+            getStartPoint<O extends Phaser.Math.Vector2>(out?: O): O;
+
+            /**
+             * Returns an array containing the total track length at the end of each segment.
+             * @returns The cumulative lengths.
+             */
+            getCurveLengths(): number[];
+
+            /**
+             * Returns the total arc length of the track.
+             * @returns The total length, in pixels.
+             */
+            getLength(): number;
+
+            /**
+             * Clears the cached arc lengths and recalculates them.
+             * @returns This RailTrack object.
+             */
+            updateArcLengths(): this;
+
+            /**
+             * Returns the segment that contains the given normalized position, and the local
+             * `u` value within that segment.
+             * @param t The normalized position, between 0 and 1.
+             * @returns An object with `segment` and `u` properties, or `null` if the position is out of range.
+             */
+            getSegmentAt(t: number): { segment: object, u: number } | null;
+
+            /**
+             * Returns the point at a normalized position on the track.
+             *
+             * This is the "sample by normalized position" view: it does not wrap. At `t = 1` the
+             * geometric end of the track is returned, even on a closed track, and the heading is the
+             * heading of the final segment.
+             * @param t The normalized position, between 0 and 1.
+             * @param out An optional Vector2 to store the result in.
+             * @returns The point, or `null` if `t` is out of range.
+             */
+            getPoint<O extends Phaser.Math.Vector2>(t: number, out?: O): O | null;
+
+            /**
+             * Returns the unit tangent (heading) at a normalized position on the track.
+             * @param t The normalized position, between 0 and 1.
+             * @param out An optional Vector2 to store the result in.
+             * @returns The unit tangent, or `null` if `t` is out of range.
+             */
+            getTangent<O extends Phaser.Math.Vector2>(t: number, out?: O): O | null;
+
+            /**
+             * Maps a traveled distance onto the track.
+             *
+             * A closed track wraps the distance into `[0, length)`, so a whole lap resolves to 0.
+             * An open track clamps the distance to `[0, length]`.
+             * @param distance The raw traveled distance.
+             * @returns The resolved distance.
+             */
+            resolveDistance(distance: number): number;
+
+            /**
+             * Returns the point at a traveled distance along the track.
+             * @param distance The distance traveled from the start of the track.
+             * @param out An optional Vector2 to store the result in.
+             * @returns The point at the resolved distance.
+             */
+            getPointAtDistance<O extends Phaser.Math.Vector2>(distance: number, out?: O): O;
+
+            /**
+             * Returns the unit tangent (heading) at a traveled distance along the track.
+             * @param distance The distance traveled from the start of the track.
+             * @param out An optional Vector2 to store the result in.
+             * @returns The unit tangent at the resolved distance.
+             */
+            getTangentAtDistance<O extends Phaser.Math.Vector2>(distance: number, out?: O): O;
+
+            /**
+             * Returns the state of the vehicle at a traveled distance.
+             * @param distance The distance traveled from the start of the track.
+             * @returns An object with `distance`, `point` and `tangent` properties.
+             */
+            getCarState(distance: number): { distance: number, point: Phaser.Math.Vector2, tangent: Phaser.Math.Vector2 };
+
+            /**
+             * Returns the observation state at a fixed distance ahead of the vehicle.
+             * @param distance The vehicle's traveled distance.
+             * @param lead The distance ahead of the vehicle. Defaults to the track's `lookAhead` value.
+             * @returns An object with `distance`, `point` and `tangent` properties.
+             */
+            getObservation(distance: number, lead?: number): { distance: number, point: Phaser.Math.Vector2, tangent: Phaser.Math.Vector2 };
+
+            /**
+             * Returns only the observation point at a fixed distance ahead of the vehicle.
+             * @param distance The vehicle's traveled distance.
+             * @param lead The distance ahead of the vehicle. Defaults to the track's `lookAhead` value.
+             * @param out An optional Vector2 to store the result in.
+             * @returns The observation point.
+             */
+            getObservationPoint<O extends Phaser.Math.Vector2>(distance: number, lead?: number, out?: O): O;
+
+            /**
+             * Returns only the observation heading at a fixed distance ahead of the vehicle.
+             * @param distance The vehicle's traveled distance.
+             * @param lead The distance ahead of the vehicle. Defaults to the track's `lookAhead` value.
+             * @param out An optional Vector2 to store the result in.
+             * @returns The observation tangent.
+             */
+            getObservationTangent<O extends Phaser.Math.Vector2>(distance: number, lead?: number, out?: O): O;
+
+            /**
+             * Returns a sequence of evenly spaced points along the track, by normalized position.
+             * @param divisions The number of divisions to make. Default 100.
+             * @returns The points along the track.
+             */
+            getPoints(divisions?: number): Phaser.Math.Vector2[];
+
+            /**
+             * Draws the track to a Graphics Game Object.
+             * @param graphics The Graphics object to draw to.
+             * @param pointsTotal The number of points to use for each segment. Default 32.
+             * @returns The Graphics object that was drawn to.
+             */
+            draw<G extends Phaser.GameObjects.Graphics>(graphics: Phaser.GameObjects.Graphics, pointsTotal?: number): G;
+
+            /**
+             * Converts the track to a JSON object.
+             * @returns The JSON representation of this track.
+             */
+            toJSON(): object;
+
+            /**
+             * Destroys this track, clearing its segment data.
+             */
+            destroy(): void;
+
+        }
+
+        /**
          * A quadratic Bézier curve constructed from three points: a start point, a single control
          * point, and an end point. This is a second-degree Bézier curve, where the control point
          * influences the curvature of the path between the start and end points.
          */
         class QuadraticBezier extends Phaser.Curves.Curve {
             /**
-             * 
+             *
              * @param p0 Start point, or an array of point pairs.
              * @param p1 Control Point 1.
              * @param p2 The end point of the curve.
@@ -96468,6 +96766,29 @@ declare namespace Phaser {
                  * The list of the curves
                  */
                 curves: Phaser.Types.Curves.JSONCurve[];
+            };
+
+            type RailTrackConfig = {
+                /**
+                 * The x coordinate of the track's starting point.
+                 */
+                x?: number;
+                /**
+                 * The y coordinate of the track's starting point.
+                 */
+                y?: number;
+                /**
+                 * Should the track wrap when the vehicle travels past its total length? A closed track returns to its starting point; an open track stops at its end point.
+                 */
+                closed?: boolean;
+                /**
+                 * The default distance ahead of the vehicle at which the observation point is placed.
+                 */
+                lookAhead?: number;
+                /**
+                 * The number of arc length subdivisions used for each curved segment.
+                 */
+                arcLengthDivisions?: number;
             };
 
         }

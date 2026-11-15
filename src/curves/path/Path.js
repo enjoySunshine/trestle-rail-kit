@@ -780,6 +780,284 @@ var Path = new Class({
     },
 
     /**
+     * Is this Path a closed loop?
+     *
+     * A Path is considered closed if its `autoClose` flag is set, or if the start point of
+     * its first Curve is exactly the same as the end point of its last Curve.
+     *
+     * @method Phaser.Curves.Path#isClosed
+     * @since 4.3.0
+     *
+     * @return {boolean} `true` if this Path forms a closed loop, otherwise `false`.
+     */
+    isClosed: function ()
+    {
+        if (this.autoClose)
+        {
+            return true;
+        }
+
+        if (this.curves.length === 0)
+        {
+            return false;
+        }
+
+        var startPoint = this.curves[0].getPoint(0, this._tmpVec2A);
+        var endPoint = this.curves[this.curves.length - 1].getPoint(1, this._tmpVec2B);
+
+        return startPoint.equals(endPoint);
+    },
+
+    /**
+     * Maps a traveled distance onto this Path.
+     *
+     * If `wrap` is `true`, a closed loop wraps the distance around, so a distance of exactly
+     * one full Path length resolves to 0. If `wrap` is `false`, the distance is clamped to the
+     * start and end of the Path. If `wrap` is omitted, the Path's closed state is used,
+     * as reported by {@link #isClosed}.
+     *
+     * @method Phaser.Curves.Path#resolveDistance
+     * @since 4.3.0
+     *
+     * @param {number} distance - The raw traveled distance, in pixels.
+     * @param {boolean} [wrap] - Force wrapping on (`true`) or off (`false`). Defaults to the Path's closed state.
+     *
+     * @return {number} The resolved distance, between 0 and the total Path length.
+     */
+    resolveDistance: function (distance, wrap)
+    {
+        var length = this.getLength();
+
+        if (length === 0)
+        {
+            return 0;
+        }
+
+        if (wrap === undefined)
+        {
+            wrap = this.isClosed();
+        }
+
+        if (wrap)
+        {
+            var wrapped = distance % length;
+
+            if (wrapped < 0)
+            {
+                wrapped += length;
+            }
+
+            //  A whole lap is the start of the Path, not its end.
+            if (wrapped >= length)
+            {
+                wrapped = 0;
+            }
+
+            return wrapped;
+        }
+
+        if (distance < 0)
+        {
+            return 0;
+        }
+
+        if (distance > length)
+        {
+            return length;
+        }
+
+        return distance;
+    },
+
+    /**
+     * Returns the point at a traveled distance along the Path.
+     *
+     * Unlike {@link #getPoint}, which samples by normalized position, this method samples by
+     * arc length. On a closed Path, distances beyond the total length wrap back to the start;
+     * on an open Path they clamp to the end point.
+     *
+     * @method Phaser.Curves.Path#getPointAtDistance
+     * @since 4.3.0
+     *
+     * @generic {Phaser.Math.Vector2} O - [out,$return]
+     *
+     * @param {number} distance - The distance traveled from the start of the Path, in pixels.
+     * @param {boolean} [wrap] - Force wrapping on (`true`) or off (`false`). Defaults to the Path's closed state.
+     * @param {Phaser.Math.Vector2} [out] - An object in which to store the calculated point.
+     *
+     * @return {Phaser.Math.Vector2} The point at the resolved distance.
+     */
+    getPointAtDistance: function (distance, wrap, out)
+    {
+        if (wrap !== null && typeof wrap === 'object')
+        {
+            out = wrap;
+            wrap = undefined;
+        }
+
+        if (out === undefined) { out = new Vector2(); }
+
+        var length = this.getLength();
+
+        if (length === 0)
+        {
+            return out.copy(this.startPoint);
+        }
+
+        return this.getPoint(this.resolveDistance(distance, wrap) / length, out);
+    },
+
+    /**
+     * Returns the unit tangent (heading) at a traveled distance along the Path.
+     *
+     * Unlike {@link #getTangent}, which samples by normalized position, this method samples by
+     * arc length. On a closed Path, distances beyond the total length wrap back to the start;
+     * on an open Path they clamp to the end point.
+     *
+     * @method Phaser.Curves.Path#getTangentAtDistance
+     * @since 4.3.0
+     *
+     * @generic {Phaser.Math.Vector2} O - [out,$return]
+     *
+     * @param {number} distance - The distance traveled from the start of the Path, in pixels.
+     * @param {boolean} [wrap] - Force wrapping on (`true`) or off (`false`). Defaults to the Path's closed state.
+     * @param {Phaser.Math.Vector2} [out] - A vector to store the result in.
+     *
+     * @return {Phaser.Math.Vector2} The unit tangent at the resolved distance.
+     */
+    getTangentAtDistance: function (distance, wrap, out)
+    {
+        if (wrap !== null && typeof wrap === 'object')
+        {
+            out = wrap;
+            wrap = undefined;
+        }
+
+        if (out === undefined) { out = new Vector2(); }
+
+        var length = this.getLength();
+
+        if (length === 0)
+        {
+            return out.set(1, 0);
+        }
+
+        return this.getTangent(this.resolveDistance(distance, wrap) / length, out);
+    },
+
+    /**
+     * Returns the state of a vehicle at a traveled distance along the Path.
+     *
+     * The returned object contains the resolved distance, the point and the heading (unit
+     * tangent) at that point.
+     *
+     * @method Phaser.Curves.Path#getCarState
+     * @since 4.3.0
+     *
+     * @param {number} distance - The distance traveled from the start of the Path, in pixels.
+     * @param {boolean} [wrap] - Force wrapping on (`true`) or off (`false`). Defaults to the Path's closed state.
+     *
+     * @return {object} An object with `distance`, `point` and `tangent` properties.
+     */
+    getCarState: function (distance, wrap)
+    {
+        var resolved = this.resolveDistance(distance, wrap);
+
+        return {
+            distance: resolved,
+            point: this.getPointAtDistance(distance, wrap),
+            tangent: this.getTangentAtDistance(distance, wrap)
+        };
+    },
+
+    /**
+     * Returns the observation state at a fixed distance ahead of a vehicle.
+     *
+     * The observation distance is resolved with the same rules as the vehicle: on a closed
+     * Path it wraps past the end and back onto the first Curve, while on an open Path it
+     * stops at the final point.
+     *
+     * @method Phaser.Curves.Path#getObservation
+     * @since 4.3.0
+     *
+     * @param {number} distance - The vehicle's traveled distance, in pixels.
+     * @param {number} lead - The distance ahead of the vehicle, in pixels.
+     * @param {boolean} [wrap] - Force wrapping on (`true`) or off (`false`). Defaults to the Path's closed state.
+     *
+     * @return {object} An object with `distance`, `point` and `tangent` properties.
+     */
+    getObservation: function (distance, lead, wrap)
+    {
+        if (lead === undefined) { lead = 0; }
+
+        var observationDistance = distance + lead;
+
+        return {
+            distance: this.resolveDistance(observationDistance, wrap),
+            point: this.getPointAtDistance(observationDistance, wrap),
+            tangent: this.getTangentAtDistance(observationDistance, wrap)
+        };
+    },
+
+    /**
+     * Returns only the observation point at a fixed distance ahead of a vehicle.
+     *
+     * @method Phaser.Curves.Path#getObservationPoint
+     * @since 4.3.0
+     *
+     * @generic {Phaser.Math.Vector2} O - [out,$return]
+     *
+     * @param {number} distance - The vehicle's traveled distance, in pixels.
+     * @param {number} lead - The distance ahead of the vehicle, in pixels.
+     * @param {boolean} [wrap] - Force wrapping on (`true`) or off (`false`). Defaults to the Path's closed state.
+     * @param {Phaser.Math.Vector2} [out] - An object in which to store the calculated point.
+     *
+     * @return {Phaser.Math.Vector2} The observation point.
+     */
+    getObservationPoint: function (distance, lead, wrap, out)
+    {
+        if (wrap !== null && typeof wrap === 'object')
+        {
+            out = wrap;
+            wrap = undefined;
+        }
+
+        if (lead === undefined) { lead = 0; }
+        if (out === undefined) { out = new Vector2(); }
+
+        return this.getPointAtDistance(distance + lead, wrap, out);
+    },
+
+    /**
+     * Returns only the observation heading at a fixed distance ahead of a vehicle.
+     *
+     * @method Phaser.Curves.Path#getObservationTangent
+     * @since 4.3.0
+     *
+     * @generic {Phaser.Math.Vector2} O - [out,$return]
+     *
+     * @param {number} distance - The vehicle's traveled distance, in pixels.
+     * @param {number} lead - The distance ahead of the vehicle, in pixels.
+     * @param {boolean} [wrap] - Force wrapping on (`true`) or off (`false`). Defaults to the Path's closed state.
+     * @param {Phaser.Math.Vector2} [out] - A vector to store the result in.
+     *
+     * @return {Phaser.Math.Vector2} The observation tangent.
+     */
+    getObservationTangent: function (distance, lead, wrap, out)
+    {
+        if (wrap !== null && typeof wrap === 'object')
+        {
+            out = wrap;
+            wrap = undefined;
+        }
+
+        if (lead === undefined) { lead = 0; }
+        if (out === undefined) { out = new Vector2(); }
+
+        return this.getTangentAtDistance(distance + lead, wrap, out);
+    },
+
+    /**
      * Creates a line curve from the previous end point to x/y.
      *
      * @method Phaser.Curves.Path#lineTo
